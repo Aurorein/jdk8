@@ -291,6 +291,8 @@ public class PriorityQueue<E> extends AbstractQueue<E>
     private void grow(int minCapacity) {
         int oldCapacity = queue.length;
         // Double size if small; else grow by 50%
+
+        // 在容量小于64之前扩容都是翻倍，超过64以后扩容1.5倍
         int newCapacity = oldCapacity + ((oldCapacity < 64) ?
                                          (oldCapacity + 2) :
                                          (oldCapacity >> 1));
@@ -335,12 +337,15 @@ public class PriorityQueue<E> extends AbstractQueue<E>
             throw new NullPointerException();
         modCount++;
         int i = size;
+        // 如果超过最大容量了，扩容
         if (i >= queue.length)
             grow(i + 1);
         size = i + 1;
+
         if (i == 0)
             queue[0] = e;
         else
+            // 在shiftUp函数中进行插入操作
             siftUp(i, e);
         return true;
     }
@@ -651,10 +656,15 @@ public class PriorityQueue<E> extends AbstractQueue<E>
     private void siftUpComparable(int k, E x) {
         Comparable<? super E> key = (Comparable<? super E>) x;
         while (k > 0) {
+            // 向上寻找父节点
             int parent = (k - 1) >>> 1;
+            // e为父节点
             Object e = queue[parent];
+            // 如果key比父节点大了，跳出循环
             if (key.compareTo((E) e) >= 0)
                 break;
+            // key比父节点小，则将当前节点替换成父节点
+            // 当前指针指向父节点，继续向上遍历
             queue[k] = e;
             k = parent;
         }
@@ -694,15 +704,21 @@ public class PriorityQueue<E> extends AbstractQueue<E>
         Comparable<? super E> key = (Comparable<? super E>)x;
         int half = size >>> 1;        // loop while a non-leaf
         while (k < half) {
+            // 得到左孩子节点
             int child = (k << 1) + 1; // assume left child is least
             Object c = queue[child];
+            // 同时得到右孩子的指针
             int right = child + 1;
+            // 让c指向左右孩子中的更小的节点
             if (right < size &&
                 ((Comparable<? super E>) c).compareTo((E) queue[right]) > 0)
                 c = queue[child = right];
+            // 如果比左右孩子都要小了，停止向下遍历
             if (key.compareTo((E) c) <= 0)
                 break;
+            // 否则将左右孩子中较小的那个孩子替换到当前的节点的位置
             queue[k] = c;
+            // 将当前指针指向左右孩子中较小的孩子
             k = child;
         }
         queue[k] = key;

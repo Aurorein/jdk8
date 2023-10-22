@@ -88,6 +88,10 @@ public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
      * waiting thread, but not necessarily the current leader, is
      * signalled.  So waiting threads must be prepared to acquire
      * and lose leadership while waiting.
+     * 延迟队列的任务只有到期之后才会执行,对于没有到期的任务只有等待,
+     * 为了确保优先级最高的任务到期后可以即刻被执行,设计者就用 leader 来管理延迟任务，
+     * 只有 leader 所指向的线程才具备定时等待任务到期执行的权限，而其他那些优先级低的任务只能无限期等待，
+     * 直到 leader 线程执行完手头的延迟任务后唤醒它。
      */
     private Thread leader = null;
 
@@ -95,6 +99,9 @@ public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
      * Condition signalled when a newer element becomes available
      * at the head of the queue or a new thread may need to
      * become leader.
+     * 上文讲述 leader 线程时提到的等待唤醒操作的交互就是通过 available 实现的，
+     * 假如线程 1 尝试在空的 DelayQueue 获取任务时，available 就会将其放入等待队列中。
+     * 直到有一个线程添加一个延迟任务后通过 available 的 signal 方法将其唤醒。
      */
     private final Condition available = lock.newCondition();
 
@@ -137,9 +144,14 @@ public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
         final ReentrantLock lock = this.lock;
         lock.lock();
         try {
+            // 尝试将e加入到priorityQueue里面
             q.offer(e);
+            // 查看优先队列的队首元素是否就是当前元素
             if (q.peek() == e) {
+                // 将leader设为null，并通知调取元素方法而阻塞的线程来争抢这个任务
+                // 这一步很重要，如果新加入的是优先级更高的，应该把之前leader引用释放掉，让当前任务成为优先级最高的，否则当前任务无法最先执行
                 leader = null;
+                // 唤醒一个线程重新成为leader
                 available.signal();
             }
             return true;
@@ -206,22 +218,34 @@ public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
         lock.lockInterruptibly();
         try {
             for (;;) {
+                // 获取队首元素
                 E first = q.peek();
+                // 如果队首为空，则一直阻塞（阻塞队列的实现）
                 if (first == null)
                     available.await();
+
+                // 队首不为空，说明有要执行的任务
                 else {
                     long delay = first.getDelay(NANOSECONDS);
+
+                    // 如果该任务已经到时间了，则直接返回并执行
                     if (delay <= 0)
                         return q.poll();
+                    // 未到时间，当前任务无法执行，设为null（后续会进行阻塞等待）
                     first = null; // don't retain ref while waiting
+                    // leader不为空，说明正有线程正在等待一个任务到期，则当前线程进入无限等待
                     if (leader != null)
                         available.await();
+                    // 如果当前没有leader，则可以将自己设为leader
                     else {
                         Thread thisThread = Thread.currentThread();
                         leader = thisThread;
+                        // 进入有限等待
+                        // 等待的时间段leader引用是不会被释放的
                         try {
                             available.awaitNanos(delay);
                         } finally {
+                            // 等到任务到期时，释放leader的引用，进入下一次循环将任务return出去
                             if (leader == thisThread)
                                 leader = null;
                         }
@@ -229,6 +253,8 @@ public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
                 }
             }
         } finally {
+            // 每次队列不为空并且没有leader在执行任务
+            // 都会唤醒等待队列中的线程
             if (leader == null && q.peek() != null)
                 available.signal();
             lock.unlock();
@@ -251,25 +277,38 @@ public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
         lock.lockInterruptibly();
         try {
             for (;;) {
+                // 取队首的元素
                 E first = q.peek();
+                // 队列为空的情况
                 if (first == null) {
+                    // 如果已经超时了，直接返回null
                     if (nanos <= 0)
                         return null;
+                    // 如果还没超时，此时队列还为空，进入等待队列等待剩余超时时间后唤醒
                     else
                         nanos = available.awaitNanos(nanos);
+                // 队列中有元素
                 } else {
                     long delay = first.getDelay(NANOSECONDS);
+                    // 如果当前任务已经超时了，将当前任务返回（返回即可执行）
                     if (delay <= 0)
                         return q.poll();
+                    // 当前任务没有超时，且已经超时了，直接返回null
                     if (nanos <= 0)
                         return null;
                     first = null; // don't retain ref while waiting
+
+                    // 如果leader不为null，说明有其他线程正在执行任务，阻塞直到超时
+                    // 在超时时间之前队首任务不能被执行，阻塞直到超时
                     if (nanos < delay || leader != null)
                         nanos = available.awaitNanos(nanos);
                     else {
+                    // leader为null，队列中有其他元素，则将自己设为leader，表示自己抢占了队首元素
+                    // 其他线程将一直在等待队列中等待，直到leader任务执行完后唤醒等待队列中的其他线程
                         Thread thisThread = Thread.currentThread();
                         leader = thisThread;
                         try {
+                            //
                             long timeLeft = available.awaitNanos(delay);
                             nanos -= delay - timeLeft;
                         } finally {

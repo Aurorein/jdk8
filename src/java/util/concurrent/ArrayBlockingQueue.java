@@ -349,6 +349,8 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E>
         final ReentrantLock lock = this.lock;
         lock.lockInterruptibly();
         try {
+            // 如果满了则将线程放到notFull条件变量的等待队列
+            // 在执行了dequeue以后会从notFull中唤醒一个线程
             while (count == items.length)
                 notFull.await();
             enqueue(e);
@@ -374,8 +376,10 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E>
         lock.lockInterruptibly();
         try {
             while (count == items.length) {
+                // 如果超时了还是满的，返回false
                 if (nanos <= 0)
                     return false;
+                // 如果未超时队列满了，则进入notFull条件变量的等待队列等待指定的超时时间
                 nanos = notFull.awaitNanos(nanos);
             }
             enqueue(e);
@@ -399,6 +403,8 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E>
         final ReentrantLock lock = this.lock;
         lock.lockInterruptibly();
         try {
+            // 如果为空则将线程加入notEmpty条件变量的等待队列
+            // 在enqueue执行完后会唤醒一个notEmpty的线程
             while (count == 0)
                 notEmpty.await();
             return dequeue();
@@ -413,8 +419,10 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E>
         lock.lockInterruptibly();
         try {
             while (count == 0) {
+                // 如果超时时间到了还是为空，返回false
                 if (nanos <= 0)
                     return null;
+                // 如果队列为空，则阻塞等待直到超时时间
                 nanos = notEmpty.awaitNanos(nanos);
             }
             return dequeue();
